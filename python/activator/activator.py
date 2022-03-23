@@ -100,6 +100,22 @@ mwi = MiddlewareInterface(central_butler, image_bucket, config_instrument, butle
 def check_for_snap(
     instrument: str, group: int, snap: int, detector: int
 ) -> Optional[str]:
+    """Search for new raw files matching a particular data ID.
+
+    The search is performed in the active image bucket.
+
+    Parameters
+    ----------
+    instrument, group, snap, detector
+        The data ID to search for.
+
+    Returns
+    -------
+    name : `str` or `None`
+        The raw's location in the active bucket, or `None` if no file
+        was found. If multiple files match, this function logs an error
+        but returns one of the files anyway.
+    """
     prefix = f"{instrument}/{detector}/{group}/{snap}/{instrument}-{group}-{snap}-"
     _log.debug(f"Checking for '{prefix}'")
     blobs = list(storage_client.list_blobs(image_bucket, prefix=prefix))
@@ -109,7 +125,7 @@ def check_for_snap(
         _log.error(
             f"Multiple files detected for a single detector/group/snap: '{prefix}'"
         )
-    return blobs[0]
+    return blobs[0].name
 
 
 @app.route("/next-visit", methods=["POST"])
