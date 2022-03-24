@@ -22,8 +22,10 @@
 __all__ = ["MiddlewareInterface"]
 
 import logging
+import os
 import tempfile
 
+from lsst.resources import ResourcePath
 import lsst.afw.cameraGeom
 from lsst.daf.butler import Butler, CollectionType
 from lsst.meas.algorithms.htmIndexer import HtmIndexer
@@ -81,6 +83,11 @@ class MiddlewareInterface:
         self.prefix = prefix
         self.central_butler = central_butler
         self.image_bucket = image_bucket
+        # TODO: this member turns MWI into a tagged class; clean this up later
+        if not prefix.startswith("file"):
+            self._download_store = tempfile.TemporaryDirectory(prefix="holding-")
+        else:
+            self._download_store = None
         self.instrument = lsst.obs.base.utils.getInstrument(instrument)
 
         self._init_local_butler(butler)
@@ -257,6 +264,24 @@ class MiddlewareInterface:
                                                                         collectionTypes=target_types):
             export.saveCollection(collection)
 
+    def _download(self, remote):
+        """Download an image located on a remote store.
+
+        Parameters
+        ----------
+        remote : `lsst.resources.ResourcePath`
+            The location from which to download the file. Must not be a
+            file:// URI.
+
+        Returns
+        -------
+        local : `lsst.resources.ResourcePath`
+            The location to which the file has been downloaded.
+        """
+        local = ResourcePath(os.path.join(self._download_store.name, remote.basename()))
+        local.transfer_from(remote, "copy")
+        return local
+
     def ingest_image(self, oid: str) -> None:
         """Ingest an image into the temporary butler.
 
@@ -267,7 +292,10 @@ class MiddlewareInterface:
             image bucket.
         """
         _log.info(f"Ingesting image id '{oid}'")
-        file = f"{self.prefix}{self.image_bucket}/{oid}"
+        file = ResourcePath(f"{self.prefix}{self.image_bucket}/{oid}")
+        if not file.isLocal:
+            # TODO: RawIngestTask doesn't currently support remote files.
+            file = self._download(file)
         result = self.rawIngestTask.run([file])
         # We only ingest one image at a time.
         # TODO: replace this assert with a custom exception, once we've decided
