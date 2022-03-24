@@ -94,7 +94,11 @@ central_butler = Butler(calib_repo,
                         inferDefaults=True)
 repo = f"/tmp/butler-{os.getpid()}"
 butler = Butler(Butler.makeRepo(repo), writeable=True)
-mwi = MiddlewareInterface(central_butler, image_bucket, config_instrument, butler)
+# TODO: RawIngestTask can't currently handle remote locations for raws, but
+# support may be added later.
+snap_buffer = os.path.join("/tmp", f"holding-{os.getpid()}")
+os.mkdir(snap_buffer)
+mwi = MiddlewareInterface(central_butler, snap_buffer, config_instrument, butler, prefix="file://")
 
 
 def check_for_snap(
@@ -126,6 +130,22 @@ def check_for_snap(
             f"Multiple files detected for a single detector/group/snap: '{prefix}'"
         )
     return blobs[0]
+
+
+def get_snap(snap):
+    """Download a snap to local storage.
+    Parameters
+    ----------
+    snap : `google.cloud.storage.Blob`
+        Google object representing an incoming image.
+    Returns
+    -------
+    path : `str`
+        Path of the downloaded file.
+    """
+    filename = os.path.join(snap_buffer, os.path.basename(snap.name))
+    snap.download_to_filename(filename)
+    return filename
 
 
 @app.route("/next-visit", methods=["POST"])
@@ -180,6 +200,7 @@ def next_visit_handler() -> Tuple[str, int]:
                 expected_visit.detector,
             )
             if file:
+                get_snap(file)
                 mwi.ingest_image(file.name)
                 snap_set.add(snap)
 
@@ -223,6 +244,7 @@ def next_visit_handler() -> Tuple[str, int]:
                         and int(snap) < int(expected_visit.snaps)
                     ):
                         # Ingest the snap
+                        get_snap(image_bucket.blob(oid))
                         mwi.ingest_image(oid)
                         snap_set.add(snap)
                 else:
