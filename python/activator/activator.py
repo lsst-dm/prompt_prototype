@@ -99,7 +99,7 @@ mwi = MiddlewareInterface(central_butler, image_bucket, config_instrument, butle
 
 def check_for_snap(
     instrument: str, group: int, snap: int, detector: int
-) -> Optional[str]:
+) -> Optional[storage.Blob]:
     """Search for new raw files matching a particular data ID.
 
     The search is performed in the active image bucket.
@@ -111,8 +111,8 @@ def check_for_snap(
 
     Returns
     -------
-    name : `str` or `None`
-        The raw's location in the active bucket, or `None` if no file
+    snap : `google.cloud.storage.Blob` or `None`
+        The raw's location, or `None` if no file
         was found. If multiple files match, this function logs an error
         but returns one of the files anyway.
     """
@@ -125,7 +125,7 @@ def check_for_snap(
         _log.error(
             f"Multiple files detected for a single detector/group/snap: '{prefix}'"
         )
-    return blobs[0].name
+    return blobs[0]
 
 
 @app.route("/next-visit", methods=["POST"])
@@ -173,14 +173,14 @@ def next_visit_handler() -> Tuple[str, int]:
 
         # Check to see if any snaps have already arrived
         for snap in range(expected_visit.snaps):
-            oid = check_for_snap(
+            file = check_for_snap(
                 expected_visit.instrument,
                 expected_visit.group,
                 snap,
                 expected_visit.detector,
             )
-            if oid:
-                mwi.ingest_image(oid)
+            if file:
+                mwi.ingest_image(file.name)
                 snap_set.add(snap)
 
         _log.debug(
