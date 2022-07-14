@@ -159,7 +159,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.assertEqual(self.interface.rawIngestTask.config.failFast, True)
         self.assertEqual(self.interface.rawIngestTask.config.transfer, "copy")
 
-    def _check_imports(self, butler, detector):
+    def _check_imports(self, butler, detector, expected_shards):
         """Test that the butler has the expected supporting data.
         """
         self.assertEqual(butler.get('camera',
@@ -175,16 +175,11 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         )
 
         # check that we got appropriate refcat shards
-        loaded_shards = list(butler.registry.queryDataIds("htm7",
-                                                          datasets="gaia",
-                                                          collections="refcats"))
+        loaded_shards = butler.registry.queryDataIds("htm7",
+                                                     datasets="gaia",
+                                                     collections="refcats")
 
-        # These shards were identified by plotting the objects in each shard
-        # on-sky and overplotting the detector corners.
-        # TODO DM-34112: check these shards again with some plots, once I've
-        # determined whether ci_hits2015 actually has enough shards.
-        expected_shards = [157394, 157401, 157405]
-        self.assertEqual(expected_shards, [x['htm7'] for x in loaded_shards])
+        self.assertEqual(expected_shards, {x['htm7'] for x in loaded_shards})
         # Check that the right calibs are in the chained output collection.
         try:
             self.assertTrue(
@@ -222,7 +217,12 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         """
         self.interface.prep_butler(self.next_visit)
 
-        self._check_imports(self.butler, detector=56)
+        # These shards were identified by plotting the objects in each shard
+        # on-sky and overplotting the detector corners.
+        # TODO DM-34112: check these shards again with some plots, once I've
+        # determined whether ci_hits2015 actually has enough shards.
+        expected_shards = {157394, 157401, 157405}
+        self._check_imports(self.butler, detector=56, expected_shards=expected_shards)
 
         # Check that we configured the right pipeline.
         self.assertEqual(self.interface.pipeline._pipelineIR.description,
@@ -238,7 +238,8 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.interface.prep_butler(self.next_visit)
         # TODO: update next_visit with a new group number
         self.interface.prep_butler(self.next_visit)
-        self._check_imports(self.butler, detector=56)
+        expected_shards = {157394, 157401, 157405}
+        self._check_imports(self.butler, detector=56, expected_shards=expected_shards)
 
     def test_ingest_image(self):
         filename = "fakeRawImage.fits"
