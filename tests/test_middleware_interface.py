@@ -228,7 +228,6 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.assertEqual(self.interface.pipeline._pipelineIR.description,
                          "End to end Alert Production pipeline specialized for HiTS-2015")
 
-    @unittest.skip("We know this doesn't work (skymaps!), but this is a test we want to have!")
     def test_prep_butler_twice(self):
         """prep_butler should have the correct calibs (and not raise an
         exception!) on a second run with the same, or a different detector.
@@ -239,6 +238,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.interface.prep_butler(self.next_visit)
         # TODO: update next_visit with a new group number
         self.interface.prep_butler(self.next_visit)
+        self._check_imports(self.butler)
 
     def test_ingest_image(self):
         filename = "fakeRawImage.fits"

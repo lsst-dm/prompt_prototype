@@ -250,7 +250,8 @@ class MiddlewareInterface:
         # collection, so we have to specify a list here. Replace this
         # with another solution ASAP.
         possible_refcats = ["gaia", "panstarrs", "gaia_dr2_20200414", "ps1_pv3_3pi_20170110"]
-        export.saveDatasets(self.central_butler.registry.queryDatasets(
+        export.saveDatasets(_query_missing_datasets(
+            self.central_butler, self.butler,
             possible_refcats,
             collections=self.instrument.makeRefCatCollectionName(),
             where=htm_where,
@@ -276,9 +277,10 @@ class MiddlewareInterface:
         # TODO: We only want to import the skymap dimension once in init,
         # otherwise we get a UNIQUE constraint error when prepping for the
         # second visit.
-        export.saveDatasets(self.central_butler.registry.queryDatasets("skyMap",
-                                                                       collections=self._COLLECTION_SKYMAP,
-                                                                       findFirst=True))
+        export.saveDatasets(_query_missing_datasets(self.central_butler, self.butler,
+                                                    "skyMap",
+                                                    collections=self._COLLECTION_SKYMAP,
+                                                    findFirst=True))
         # Getting only one tract should be safe: we're getting the
         # tract closest to this detector, so we should be well within
         # the tract bbox.
@@ -294,9 +296,10 @@ class MiddlewareInterface:
         # TODO: alternately, we need to extract it from the pipeline? (best?)
         # TODO: alternately, can we just assume that there is exactly
         # one coadd type in the central butler?
-        export.saveDatasets(self.central_butler.registry.queryDatasets("*Coadd",
-                                                                       collections=self._COLLECTION_TEMPLATE,
-                                                                       where=template_where))
+        export.saveDatasets(_query_missing_datasets(self.central_butler, self.butler,
+                                                    "*Coadd",
+                                                    collections=self._COLLECTION_TEMPLATE,
+                                                    where=template_where))
 
     def _export_calibs(self, export, detector_id, filter):
         """Export the calibs for this visit from the central butler.
@@ -314,7 +317,8 @@ class MiddlewareInterface:
         # supported in queryDatasets yet.
         calib_where = f"detector={detector_id} and physical_filter='{filter}'"
         export.saveDatasets(
-            self.central_butler.registry.queryDatasets(
+            _query_missing_datasets(
+                self.central_butler, self.butler,
                 ...,
                 collections=self.instrument.makeCalibrationCollectionName(),
                 where=calib_where),
