@@ -159,7 +159,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.assertEqual(self.interface.rawIngestTask.config.failFast, True)
         self.assertEqual(self.interface.rawIngestTask.config.transfer, "copy")
 
-    def _check_imports(self, butler):
+    def _check_imports(self, butler, detector):
         """Test that the butler has the expected supporting data.
         """
         self.assertEqual(butler.get('camera',
@@ -188,7 +188,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         # Check that the right calibs are in the chained output collection.
         try:
             self.assertTrue(
-                butler.datasetExists('cpBias', detector=56, instrument='DECam',
+                butler.datasetExists('cpBias', detector=detector, instrument='DECam',
                                      collections="DECam/calib/20150218T000000Z")
                 # TODO: Have to use the exact run collection, because we can't
                 # query by validity range.
@@ -198,7 +198,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
             self.fail("Bias file missing from local butler.")
         try:
             self.assertTrue(
-                butler.datasetExists('cpFlat', detector=56, instrument='DECam',
+                butler.datasetExists('cpFlat', detector=detector, instrument='DECam',
                                      physical_filter=filter,
                                      collections="DECam/calib/20150218T000000Z")
                 # TODO: Have to use the exact run collection, because we can't
@@ -222,7 +222,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         """
         self.interface.prep_butler(self.next_visit)
 
-        self._check_imports(self.butler)
+        self._check_imports(self.butler, detector=56)
 
         # Check that we configured the right pipeline.
         self.assertEqual(self.interface.pipeline._pipelineIR.description,
@@ -238,7 +238,7 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         self.interface.prep_butler(self.next_visit)
         # TODO: update next_visit with a new group number
         self.interface.prep_butler(self.next_visit)
-        self._check_imports(self.butler)
+        self._check_imports(self.butler, detector=56)
 
     def test_ingest_image(self):
         filename = "fakeRawImage.fits"
