@@ -236,10 +236,36 @@ class MiddlewareInterfaceTest(unittest.TestCase):
         the skymap in init" problem.
         """
         self.interface.prep_butler(self.next_visit)
-        # TODO: update next_visit with a new group number
+
+        # Second visit with everything same except group.
+        self.next_visit = Visit(instrument=self.next_visit.instrument,
+                                detector=self.next_visit.detector,
+                                group=self.next_visit.group + 1,
+                                snaps=self.next_visit.snaps,
+                                filter=self.next_visit.filter,
+                                ra=self.next_visit.ra,
+                                dec=self.next_visit.dec,
+                                rot=self.next_visit.rot,
+                                kind=self.next_visit.kind)
         self.interface.prep_butler(self.next_visit)
         expected_shards = {157394, 157401, 157405}
         self._check_imports(self.butler, detector=56, expected_shards=expected_shards)
+
+        # Third visit with different detector and coordinates.
+        # Only 5, 10, 56, 60 have valid calibs.
+        self.next_visit = Visit(instrument=self.next_visit.instrument,
+                                detector=5,
+                                group=self.next_visit.group + 1,
+                                snaps=self.next_visit.snaps,
+                                filter=self.next_visit.filter,
+                                # Offset by a bit over 1 patch.
+                                ra=self.next_visit.ra + 0.4,
+                                dec=self.next_visit.dec - 0.4,
+                                rot=self.next_visit.rot,
+                                kind=self.next_visit.kind)
+        self.interface.prep_butler(self.next_visit)
+        expected_shards.update({157218, 157229})
+        self._check_imports(self.butler, detector=5, expected_shards=expected_shards)
 
     def test_ingest_image(self):
         filename = "fakeRawImage.fits"

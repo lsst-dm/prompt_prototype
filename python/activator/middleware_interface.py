@@ -274,9 +274,6 @@ class MiddlewareInterface:
         """
         # TODO: This exports the whole skymap, but we want to only export the
         # subset of the skymap that covers this data.
-        # TODO: We only want to import the skymap dimension once in init,
-        # otherwise we get a UNIQUE constraint error when prepping for the
-        # second visit.
         export.saveDatasets(_query_missing_datasets(self.central_butler, self.butler,
                                                     "skyMap",
                                                     collections=self._COLLECTION_SKYMAP,
