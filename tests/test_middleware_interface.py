@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import itertools
 import tempfile
 import os.path
 import unittest
@@ -34,7 +35,7 @@ from lsst.obs.base.ingest import RawFileDatasetInfo, RawFileData
 import lsst.resources
 
 from activator.visit import Visit
-from activator.middleware_interface import MiddlewareInterface
+from activator.middleware_interface import MiddlewareInterface, _query_missing_datasets
 
 # The short name of the instrument used in the test repo.
 instname = "DECam"
@@ -321,3 +322,47 @@ class MiddlewareInterfaceTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "No data to process"):
             self.interface.run_pipeline(self.next_visit, {2})
+
+    def test_query_missing_datasets(self):
+        """Test that query_missing_datasets provides the correct values.
+        """
+        # Much easier to create DatasetRefs with a real repo.
+        butler = self.interface.central_butler
+        dtype = butler.registry.getDatasetType("cpBias")
+        data1 = lsst.daf.butler.DatasetRef(dtype, {"instrument": "DECam", "detector": 5})
+        data2 = lsst.daf.butler.DatasetRef(dtype, {"instrument": "DECam", "detector": 25})
+        data3 = lsst.daf.butler.DatasetRef(dtype, {"instrument": "DECam", "detector": 42})
+
+        for src, existing in itertools.product([set(), {data1, data2}, {data1, data2, data3}], repeat=2):
+            diff = src - existing
+            src_butler = unittest.mock.Mock(**{"registry.queryDatasets.return_value": src})
+            existing_butler = unittest.mock.Mock(**{"registry.queryDatasets.return_value": existing})
+
+            with self.subTest(src=sorted(ref.dataId["detector"] for ref in src),
+                              existing=sorted(ref.dataId["detector"] for ref in existing)):
+                result = set(_query_missing_datasets(src_butler, existing_butler,
+                                                     "cpBias", instrument="DECam"))
+                src_butler.registry.queryDatasets.assert_called_once_with("cpBias", instrument="DECam")
+                existing_butler.registry.queryDatasets.assert_called_once_with("cpBias", instrument="DECam")
+                self.assertEqual(result, diff)
+
+    def test_query_missing_datasets_nodim(self):
+        """Test that query_missing_datasets provides the correct values when
+        the destination repository is missing not only datasets, but the
+        dimensions to define them.
+        """
+        # Much easier to create DatasetRefs with a real repo.
+        butler = self.interface.central_butler
+        dtype = butler.registry.getDatasetType("skyMap")
+        data1 = lsst.daf.butler.DatasetRef(dtype, {"skymap": "mymap"})
+
+        src_butler = unittest.mock.Mock(**{"registry.queryDatasets.return_value": {data1}})
+        existing_butler = unittest.mock.Mock(
+            **{"registry.queryDatasets.side_effect":
+               lsst.daf.butler.registry.DataIdValueError(
+                   "Unknown values specified for governor dimension skymap: {'mymap'}")
+               })
+
+        result = set(_query_missing_datasets(src_butler, existing_butler, "skyMap", ..., skymap="mymap"))
+        src_butler.registry.queryDatasets.assert_called_once_with("skyMap", ..., skymap="mymap")
+        self.assertEqual(result, {data1})

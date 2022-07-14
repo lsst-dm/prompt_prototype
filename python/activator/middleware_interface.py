@@ -21,6 +21,8 @@
 
 __all__ = ["MiddlewareInterface"]
 
+import collections.abc
+import itertools
 import logging
 import os
 import os.path
@@ -458,3 +460,38 @@ class MiddlewareInterface:
         # *Diff_diaSrcTable, etc. have not been registered.
         result = executor.run(register_dataset_types=True)
         _log.info(f"Pipeline successfully run on {len(result)} quanta.")
+
+
+def _query_missing_datasets(src_repo: Butler, dest_repo: Butler,
+                            *args, **kwargs) -> collections.abc.Iterable[lsst.daf.butler.DatasetRef]:
+    """Return datasets that are present in one repository but not another.
+
+    Parameters
+    ----------
+    src_repo : `lsst.daf.butler.Butler`
+        The repository in which a dataset must be present.
+    dest_repo : `lsst.daf.butler.Butler`
+        The repository in which a dataset must not be present.
+    *args, **kwargs
+        Parameters for describing the dataset query. They have the same
+        meanings as the parameters of `lsst.daf.butler.Registry.queryDatasets`.
+
+    Returns
+    -------
+    datasets : iterable [`lsst.daf.butler.DatasetRef`]
+        The datasets that exist in ``src_repo`` but not ``dest_repo``.
+    """
+    try:
+        # TODO: storing this set in memory may be a performance bottleneck.
+        # In general, expect dest_repo to have more datasets than src_repo.
+        known_datasets = set(dest_repo.registry.queryDatasets(*args, **kwargs))
+    except lsst.daf.butler.registry.DataIdValueError as e:
+        _log.debug("Pre-export query with args '%s, %s' failed with %s",
+                   ", ".join(str(a) for a in args),
+                   ", ".join(f"{k}={v}" for k, v in kwargs.items()),
+                   e)
+        # If dimensions are invalid, then *any* such datasets are missing.
+        known_datasets = set()
+    # If src_repo query fails, that invalidates this operation; raise it!
+    return itertools.filterfalse(lambda ref: ref in known_datasets,
+                                 src_repo.registry.queryDatasets(*args, **kwargs))
