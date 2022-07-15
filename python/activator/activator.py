@@ -199,13 +199,13 @@ def next_visit_handler() -> Tuple[str, int]:
             if len(response.received_messages) == 0:
                 if end - start < timeout:
                     _log.debug(
-                        f"Empty pull after {end - start}s"
-                        f" for group '{expected_visit.group}'"
+                        f"Empty pull after {end - start}s for group '{expected_visit.group}' "
+                        f"detector {expected_visit.detector}"
                     )
                     continue
                 _log.warning(
-                    "Timed out waiting for image in"
-                    f" group '{expected_visit.group}' after receiving exposures {expid_set}"
+                    f"Timed out waiting for image in group '{expected_visit.group}' "
+                    f"detector {expected_visit.detector} after receiving exposures {expid_set}"
                 )
                 break
 
