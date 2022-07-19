@@ -250,12 +250,14 @@ class MiddlewareInterface:
         # collection, so we have to specify a list here. Replace this
         # with another solution ASAP.
         possible_refcats = ["gaia", "panstarrs", "gaia_dr2_20200414", "ps1_pv3_3pi_20170110"]
-        export.saveDatasets(_query_missing_datasets(
-            self.central_butler, self.butler,
-            possible_refcats,
-            collections=self.instrument.makeRefCatCollectionName(),
-            where=htm_where,
-            findFirst=True))
+        refcats = set(_query_missing_datasets(
+                      self.central_butler, self.butler,
+                      possible_refcats,
+                      collections=self.instrument.makeRefCatCollectionName(),
+                      where=htm_where,
+                      findFirst=True))
+        _log.debug("Found %d new refcat datasets.", len(refcats))
+        export.saveDatasets(refcats)
 
     def _export_skymap_and_templates(self, export, center, detector, wcs):
         """Export the skymap and templates for this visit from the central
@@ -274,10 +276,12 @@ class MiddlewareInterface:
         """
         # TODO: This exports the whole skymap, but we want to only export the
         # subset of the skymap that covers this data.
-        export.saveDatasets(_query_missing_datasets(self.central_butler, self.butler,
-                                                    "skyMap",
-                                                    collections=self._COLLECTION_SKYMAP,
-                                                    findFirst=True))
+        skymaps = set(_query_missing_datasets(self.central_butler, self.butler,
+                                              "skyMap",
+                                              collections=self._COLLECTION_SKYMAP,
+                                              findFirst=True))
+        _log.debug("Found %d new skymap datasets.", len(skymaps))
+        export.saveDatasets(skymaps)
         # Getting only one tract should be safe: we're getting the
         # tract closest to this detector, so we should be well within
         # the tract bbox.
@@ -293,10 +297,12 @@ class MiddlewareInterface:
         # TODO: alternately, we need to extract it from the pipeline? (best?)
         # TODO: alternately, can we just assume that there is exactly
         # one coadd type in the central butler?
-        export.saveDatasets(_query_missing_datasets(self.central_butler, self.butler,
-                                                    "*Coadd",
-                                                    collections=self._COLLECTION_TEMPLATE,
-                                                    where=template_where))
+        templates = set(_query_missing_datasets(self.central_butler, self.butler,
+                                                "*Coadd",
+                                                collections=self._COLLECTION_TEMPLATE,
+                                                where=template_where))
+        _log.debug("Found %d new template datasets.", len(templates))
+        export.saveDatasets(templates)
 
     def _export_calibs(self, export, detector_id, filter):
         """Export the calibs for this visit from the central butler.
@@ -313,17 +319,46 @@ class MiddlewareInterface:
         # TODO: we can't filter by validity range because it's not
         # supported in queryDatasets yet.
         calib_where = f"detector={detector_id} and physical_filter='{filter}'"
+        calibs = set(_query_missing_datasets(
+            self.central_butler, self.butler,
+            ...,
+            collections=self.instrument.makeCalibrationCollectionName(),
+            where=calib_where))
+        if calibs:
+            for dataset_type, n_datasets in self._count_by_type(calibs):
+                _log.debug("Found %d new calib datasets of type '%s'.", n_datasets, dataset_type)
+        else:
+            _log.debug("Found 0 new calib datasets.")
         export.saveDatasets(
-            _query_missing_datasets(
-                self.central_butler, self.butler,
-                ...,
-                collections=self.instrument.makeCalibrationCollectionName(),
-                where=calib_where),
+            calibs,
             elements=[])  # elements=[] means do not export dimension records
         target_types = {CollectionType.CALIBRATION}
         for collection in self.central_butler.registry.queryCollections(...,
                                                                         collectionTypes=target_types):
             export.saveCollection(collection)
+
+    @staticmethod
+    def _count_by_type(refs):
+        """Count the number of dataset references of each type.
+
+        Parameters
+        ----------
+        refs : iterable [`lsst.daf.butler.DatasetRef`]
+            The references to classify.
+
+        Yields
+        ------
+        type : `str`
+            The name of a dataset type in ``refs``.
+        count : `int`
+            The number of elements of type ``type`` in ``refs``.
+        """
+        def get_key(ref):
+            return ref.datasetType.name
+
+        ordered = sorted(refs, key=get_key)
+        for k, g in itertools.groupby(ordered, key=get_key):
+            yield k, len(list(g))
 
     def _prep_collections(self):
         """Pre-register output collections in advance of running the pipeline.
