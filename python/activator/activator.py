@@ -230,10 +230,19 @@ def next_visit_handler() -> Tuple[str, int]:
                     _log.error(f"Failed to match object id '{oid}'")
             subscriber.acknowledge(subscription=subscription.name, ack_ids=ack_list)
 
-        # Got all the snaps; run the pipeline
-        _log.info(f"Running pipeline on group: {expected_visit.group} detector: {expected_visit.detector}")
-        mwi.run_pipeline(expected_visit, expid_set)
-        return "Pipeline executed", 200
+        if expid_set:
+            # Got at least some snaps; run the pipeline.
+            # If this is only a partial set, the processed results may still be
+            # useful for quality purposes.
+            if len(expid_set) < expected_visit.snaps:
+                _log.warning(f"Processing {len(expid_set)} snaps, expected {expected_visit.snaps}.")
+            _log.info(f"Running pipeline on group: {expected_visit.group} "
+                      f"detector: {expected_visit.detector}")
+            mwi.run_pipeline(expected_visit, expid_set)
+            return "Pipeline executed", 200
+        else:
+            _log.fatal(f"Timed out waiting for images for {expected_visit}.")
+            return "Timed out waiting for images.", 500
     finally:
         subscriber.delete_subscription(subscription=subscription.name)
 
