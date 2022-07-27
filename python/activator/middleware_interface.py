@@ -21,6 +21,8 @@
 
 __all__ = ["MiddlewareInterface"]
 
+import collections.abc
+import itertools
 import logging
 import os
 import os.path
@@ -144,33 +146,75 @@ class MiddlewareInterface:
         self.rawIngestTask = lsst.obs.base.RawIngestTask(config=config,
                                                          butler=self.butler)
 
+    def _predict_wcs(self, detector: lsst.afw.cameraGeom.Detector, visit: Visit) -> lsst.afw.geom.SkyWcs:
+        """Calculate the expected detector WCS for an incoming observation.
+
+        Parameters
+        ----------
+        detector : `lsst.afw.cameraGeom.Detector`
+            The detector for which to generate a WCS.
+        visit : `Visit`
+            Predicted observation metadata for the detector.
+
+        Returns
+        -------
+        wcs : `lsst.afw.geom.SkyWcs`
+            An approximate WCS for ``visit``.
+        """
+        boresight_center = lsst.geom.SpherePoint(visit.ra, visit.dec, lsst.geom.degrees)
+        orientation = lsst.geom.Angle(visit.rot, lsst.geom.degrees)
+        flip_x = True if self.instrument.getName() == "DECam" else False
+        return lsst.obs.base.createInitialSkyWcsFromBoresight(boresight_center,
+                                                              orientation,
+                                                              detector,
+                                                              flipX=flip_x)
+
+    def _detector_bounding_circle(self, detector: lsst.afw.cameraGeom.Detector,
+                                  wcs: lsst.afw.geom.SkyWcs
+                                  ) -> (lsst.geom.SpherePoint, lsst.geom.Angle):
+        # Could return a sphgeom.Circle, but that would require a lot of
+        # sphgeom->geom conversions downstream. Even their Angles are different!
+        """Compute a small sky circle that contains the detector.
+
+        Parameters
+        ----------
+        detector : `lsst.afw.cameraGeom.Detector`
+            The detector for which to compute an on-sky bounding circle.
+        wcs : `lsst.afw.geom.SkyWcs`
+            The conversion from detector to sky coordinates.
+
+        Returns
+        -------
+        center : `lsst.geom.SpherePoint`
+            The center of the bounding circle.
+        radius : `lsst.geom.Angle`
+            The opening angle of the bounding circle.
+        """
+        radii = []
+        center = wcs.pixelToSky(detector.getCenter(lsst.afw.cameraGeom.PIXELS))
+        for corner in detector.getCorners(lsst.afw.cameraGeom.PIXELS):
+            radii.append(wcs.pixelToSky(corner).separation(center))
+        return center, max(radii)
+
     def prep_butler(self, visit: Visit) -> None:
         """Prepare a temporary butler repo for processing the incoming data.
 
         Parameters
         ----------
-        visit : Visit
+        visit : `Visit`
             Group of snaps from one detector to prepare the butler for.
         """
         _log.info(f"Preparing Butler for visit '{visit}'")
 
+        detector = self.camera[visit.detector]
+        wcs = self._predict_wcs(detector, visit)
+        center, radius = self._detector_bounding_circle(detector, wcs)
+
+        # Need up-to-date census of what's already present.
+        self.butler.registry.refresh()
+
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".yaml") as export_file:
             with self.central_butler.export(filename=export_file.name, format="yaml") as export:
-                boresight_center = lsst.geom.SpherePoint(visit.ra, visit.dec, lsst.geom.degrees)
-                orientation = lsst.geom.Angle(visit.rot, lsst.geom.degrees)
-                detector = self.camera[visit.detector]
-                flip_x = True if self.instrument.getName() == "DECam" else False
-                wcs = lsst.obs.base.createInitialSkyWcsFromBoresight(boresight_center,
-                                                                     orientation,
-                                                                     detector,
-                                                                     flipX=flip_x)
-                # Compute the maximum sky circle that contains the detector.
-                radii = []
-                center = wcs.pixelToSky(detector.getCenter(lsst.afw.cameraGeom.PIXELS))
-                for corner in detector.getCorners(lsst.afw.cameraGeom.PIXELS):
-                    radii.append(wcs.pixelToSky(corner).separation(center))
-                radius = max(radii)
-
                 self._export_refcats(export, center, radius)
                 self._export_skymap_and_templates(export, center, detector, wcs)
                 self._export_calibs(export, visit.detector, visit.filter)
@@ -209,11 +253,14 @@ class MiddlewareInterface:
         # collection, so we have to specify a list here. Replace this
         # with another solution ASAP.
         possible_refcats = ["gaia", "panstarrs", "gaia_dr2_20200414", "ps1_pv3_3pi_20170110"]
-        export.saveDatasets(self.central_butler.registry.queryDatasets(
-            possible_refcats,
-            collections=self.instrument.makeRefCatCollectionName(),
-            where=htm_where,
-            findFirst=True))
+        refcats = set(_query_missing_datasets(
+                      self.central_butler, self.butler,
+                      possible_refcats,
+                      collections=self.instrument.makeRefCatCollectionName(),
+                      where=htm_where,
+                      findFirst=True))
+        _log.debug("Found %d new refcat datasets.", len(refcats))
+        export.saveDatasets(refcats)
 
     def _export_skymap_and_templates(self, export, center, detector, wcs):
         """Export the skymap and templates for this visit from the central
@@ -232,12 +279,12 @@ class MiddlewareInterface:
         """
         # TODO: This exports the whole skymap, but we want to only export the
         # subset of the skymap that covers this data.
-        # TODO: We only want to import the skymap dimension once in init,
-        # otherwise we get a UNIQUE constraint error when prepping for the
-        # second visit.
-        export.saveDatasets(self.central_butler.registry.queryDatasets("skyMap",
-                                                                       collections=self._COLLECTION_SKYMAP,
-                                                                       findFirst=True))
+        skymaps = set(_query_missing_datasets(self.central_butler, self.butler,
+                                              "skyMap",
+                                              collections=self._COLLECTION_SKYMAP,
+                                              findFirst=True))
+        _log.debug("Found %d new skymap datasets.", len(skymaps))
+        export.saveDatasets(skymaps)
         # Getting only one tract should be safe: we're getting the
         # tract closest to this detector, so we should be well within
         # the tract bbox.
@@ -253,9 +300,12 @@ class MiddlewareInterface:
         # TODO: alternately, we need to extract it from the pipeline? (best?)
         # TODO: alternately, can we just assume that there is exactly
         # one coadd type in the central butler?
-        export.saveDatasets(self.central_butler.registry.queryDatasets("*Coadd",
-                                                                       collections=self._COLLECTION_TEMPLATE,
-                                                                       where=template_where))
+        templates = set(_query_missing_datasets(self.central_butler, self.butler,
+                                                "*Coadd",
+                                                collections=self._COLLECTION_TEMPLATE,
+                                                where=template_where))
+        _log.debug("Found %d new template datasets.", len(templates))
+        export.saveDatasets(templates)
 
     def _export_calibs(self, export, detector_id, filter):
         """Export the calibs for this visit from the central butler.
@@ -272,16 +322,46 @@ class MiddlewareInterface:
         # TODO: we can't filter by validity range because it's not
         # supported in queryDatasets yet.
         calib_where = f"detector={detector_id} and physical_filter='{filter}'"
+        calibs = set(_query_missing_datasets(
+            self.central_butler, self.butler,
+            ...,
+            collections=self.instrument.makeCalibrationCollectionName(),
+            where=calib_where))
+        if calibs:
+            for dataset_type, n_datasets in self._count_by_type(calibs):
+                _log.debug("Found %d new calib datasets of type '%s'.", n_datasets, dataset_type)
+        else:
+            _log.debug("Found 0 new calib datasets.")
         export.saveDatasets(
-            self.central_butler.registry.queryDatasets(
-                ...,
-                collections=self.instrument.makeCalibrationCollectionName(),
-                where=calib_where),
+            calibs,
             elements=[])  # elements=[] means do not export dimension records
         target_types = {CollectionType.CALIBRATION}
         for collection in self.central_butler.registry.queryCollections(...,
                                                                         collectionTypes=target_types):
             export.saveCollection(collection)
+
+    @staticmethod
+    def _count_by_type(refs):
+        """Count the number of dataset references of each type.
+
+        Parameters
+        ----------
+        refs : iterable [`lsst.daf.butler.DatasetRef`]
+            The references to classify.
+
+        Yields
+        ------
+        type : `str`
+            The name of a dataset type in ``refs``.
+        count : `int`
+            The number of elements of type ``type`` in ``refs``.
+        """
+        def get_key(ref):
+            return ref.datasetType.name
+
+        ordered = sorted(refs, key=get_key)
+        for k, g in itertools.groupby(ordered, key=get_key):
+            yield k, len(list(g))
 
     def _prep_collections(self):
         """Pre-register output collections in advance of running the pipeline.
@@ -418,4 +498,40 @@ class MiddlewareInterface:
         # If this is a fresh (local) repo, then types like calexp,
         # *Diff_diaSrcTable, etc. have not been registered.
         result = executor.run(register_dataset_types=True)
-        _log.info(f"Pipeline successfully run on {len(result)} quanta.")
+        _log.info(f"Pipeline successfully run on {len(result)} quanta for "
+                  f"detector {visit.detector} of {exposure_ids}.")
+
+
+def _query_missing_datasets(src_repo: Butler, dest_repo: Butler,
+                            *args, **kwargs) -> collections.abc.Iterable[lsst.daf.butler.DatasetRef]:
+    """Return datasets that are present in one repository but not another.
+
+    Parameters
+    ----------
+    src_repo : `lsst.daf.butler.Butler`
+        The repository in which a dataset must be present.
+    dest_repo : `lsst.daf.butler.Butler`
+        The repository in which a dataset must not be present.
+    *args, **kwargs
+        Parameters for describing the dataset query. They have the same
+        meanings as the parameters of `lsst.daf.butler.Registry.queryDatasets`.
+
+    Returns
+    -------
+    datasets : iterable [`lsst.daf.butler.DatasetRef`]
+        The datasets that exist in ``src_repo`` but not ``dest_repo``.
+    """
+    try:
+        # TODO: storing this set in memory may be a performance bottleneck.
+        # In general, expect dest_repo to have more datasets than src_repo.
+        known_datasets = set(dest_repo.registry.queryDatasets(*args, **kwargs))
+    except lsst.daf.butler.registry.DataIdValueError as e:
+        _log.debug("Pre-export query with args '%s, %s' failed with %s",
+                   ", ".join(str(a) for a in args),
+                   ", ".join(f"{k}={v}" for k, v in kwargs.items()),
+                   e)
+        # If dimensions are invalid, then *any* such datasets are missing.
+        known_datasets = set()
+    # If src_repo query fails, that invalidates this operation; raise it!
+    return itertools.filterfalse(lambda ref: ref in known_datasets,
+                                 src_repo.registry.queryDatasets(*args, **kwargs))

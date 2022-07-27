@@ -84,7 +84,6 @@ storage_client = storage.Client()
 # However, we don't want MiddlewareInterface to need to know details like where
 # the central repo is located, either, so perhaps we need a new module.
 central_butler = Butler(calib_repo,
-                        # TODO: investigate whether these defaults, esp. skymap, slow down queries
                         instrument=active_instrument.getName(),
                         # NOTE: with inferDefaults=True, it's possible we don't need to hardcode this
                         #     value from the real repository.
@@ -94,6 +93,7 @@ central_butler = Butler(calib_repo,
                         inferDefaults=True)
 repo = f"/tmp/butler-{os.getpid()}"
 butler = Butler(Butler.makeRepo(repo), writeable=True)
+_log.info("Created local Butler repo at %s.", repo)
 mwi = MiddlewareInterface(central_butler, image_bucket, config_instrument, butler)
 
 
@@ -199,13 +199,13 @@ def next_visit_handler() -> Tuple[str, int]:
             if len(response.received_messages) == 0:
                 if end - start < timeout:
                     _log.debug(
-                        f"Empty pull after {end - start}s"
-                        f" for group '{expected_visit.group}'"
+                        f"Empty pull after {end - start}s for group '{expected_visit.group}' "
+                        f"detector {expected_visit.detector}"
                     )
                     continue
                 _log.warning(
-                    "Timed out waiting for image in"
-                    f" group '{expected_visit.group}' after receiving exposures {expid_set}"
+                    f"Timed out waiting for image in group '{expected_visit.group}' "
+                    f"detector {expected_visit.detector} after receiving exposures {expid_set}"
                 )
                 break
 
@@ -230,10 +230,19 @@ def next_visit_handler() -> Tuple[str, int]:
                     _log.error(f"Failed to match object id '{oid}'")
             subscriber.acknowledge(subscription=subscription.name, ack_ids=ack_list)
 
-        # Got all the snaps; run the pipeline
-        _log.info(f"Running pipeline on group: {expected_visit.group} detector: {expected_visit.detector}")
-        mwi.run_pipeline(expected_visit, expid_set)
-        return "Pipeline executed", 200
+        if expid_set:
+            # Got at least some snaps; run the pipeline.
+            # If this is only a partial set, the processed results may still be
+            # useful for quality purposes.
+            if len(expid_set) < expected_visit.snaps:
+                _log.warning(f"Processing {len(expid_set)} snaps, expected {expected_visit.snaps}.")
+            _log.info(f"Running pipeline on group: {expected_visit.group} "
+                      f"detector: {expected_visit.detector}")
+            mwi.run_pipeline(expected_visit, expid_set)
+            return "Pipeline executed", 200
+        else:
+            _log.fatal(f"Timed out waiting for images for {expected_visit}.")
+            return "Timed out waiting for images.", 500
     finally:
         subscriber.delete_subscription(subscription=subscription.name)
 
