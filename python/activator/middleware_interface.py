@@ -210,6 +210,9 @@ class MiddlewareInterface:
         wcs = self._predict_wcs(detector, visit)
         center, radius = self._detector_bounding_circle(detector, wcs)
 
+        # Need up-to-date census of what's already present.
+        self.butler.registry.refresh()
+
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".yaml") as export_file:
             with self.central_butler.export(filename=export_file.name, format="yaml") as export:
                 self._export_refcats(export, center, radius)
