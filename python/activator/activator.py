@@ -84,7 +84,6 @@ storage_client = storage.Client()
 # However, we don't want MiddlewareInterface to need to know details like where
 # the central repo is located, either, so perhaps we need a new module.
 central_butler = Butler(calib_repo,
-                        # TODO: investigate whether these defaults, esp. skymap, slow down queries
                         instrument=active_instrument.getName(),
                         # NOTE: with inferDefaults=True, it's possible we don't need to hardcode this
                         #     value from the real repository.
